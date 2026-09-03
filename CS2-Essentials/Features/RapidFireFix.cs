@@ -11,7 +11,7 @@ using hvhgg_essentials.Enums;
 
 namespace hvhgg_essentials.Features;
 
-public class RapidFire
+public class RapidFireFix // или RapidFire, как у вас
 {
     private readonly Dictionary<uint, int> _lastPlayerShotTick = new();
     private readonly HashSet<uint> _rapidFireBlockUserIds = new();
@@ -21,7 +21,7 @@ public class RapidFire
     public static readonly FakeConVar<int> hvh_restrict_rapidfire = new("hvh_restrict_rapidfire", "Restrict rapid fire", 0, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<int>(0, 3));
     public static readonly FakeConVar<float> hvh_rapidfire_reflect_scale = new("hvh_rapidfire_reflect_scale", "Reflect scale", 1, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<float>(0, 1));
 
-    public RapidFire(Plugin plugin)
+    public RapidFireFix(Plugin plugin)
     {
         _plugin = plugin;
         _plugin.RegisterFakeConVars(this);
@@ -156,6 +156,7 @@ public class RapidFire
 
     public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
     {
+        // Получаем оружие
         var firedWeapon = eventBulletImpact.Userid?.Pawn.Value?.WeaponServices?.ActiveWeapon.Value;
         if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
             return HookResult.Continue;
@@ -163,10 +164,9 @@ public class RapidFire
         // ===== РЕЖИМ ALLOW: снимаем ограничение после выстрела =====
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
         {
-            int tickBase = (int)eventBulletImpact.Userid.TickBase;
+            int playerTickBase = (int)eventBulletImpact.Userid.TickBase;
             // Устанавливаем следующий разрешённый тик на текущий тик минус 1
-            // Это даёт серверу небольшой запас, чтобы клиент успел отправить историю атаки
-            firedWeapon.NextPrimaryAttackTick = tickBase - 1;
+            firedWeapon.NextPrimaryAttackTick = playerTickBase - 1;
             Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
             return HookResult.Continue;
         }
@@ -179,9 +179,9 @@ public class RapidFire
         if (weaponData == null)
             return HookResult.Continue;
 
-        int tickBase = (int)eventBulletImpact.Userid.TickBase;
+        int tickBaseIgnore = (int)eventBulletImpact.Userid.TickBase;
         int fixedPrimaryTick = (int)Math.Round(weaponData.CycleTime.Values[0] * 64) - 3;
-        firedWeapon.NextPrimaryAttackTick = Math.Max(firedWeapon.NextPrimaryAttackTick, tickBase + fixedPrimaryTick);
+        firedWeapon.NextPrimaryAttackTick = Math.Max(firedWeapon.NextPrimaryAttackTick, tickBaseIgnore + fixedPrimaryTick);
         Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
 
         return HookResult.Continue;
