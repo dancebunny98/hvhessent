@@ -20,7 +20,7 @@ jobs:
         run: echo "GITHUB_SHA_SHORT=${GITHUB_SHA::7}" >> $GITHUB_ENV
 
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Extract version number from README.md
         id: extract_version
@@ -35,31 +35,21 @@ jobs:
       - name: Check if version already exists
         id: check_version
         run: |
-          if gh release view "${{ env.VERSION_NUMBER }}" > /dev/null 2>&1; then
+          if gh release view "v${{ env.VERSION_NUMBER }}" > /dev/null 2>&1; then
             echo "Version ${{ env.VERSION_NUMBER }} already exists. Exiting."
-            exit 0
+            exit 1
           fi
 
-      - name: Build runtime ${{ env.VERSION_NUMBER }}
-        uses: actions/setup-dotnet@v3
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
       - name: Restore dependencies
         run: dotnet restore
 
-      - name: Build
-        run: dotnet build -c Release --no-restore /p:Version=${{ env.VERSION_NUMBER }}
-
-      - name: Copy CSSharpUtils.dll
-        run: |
-          mkdir -p release/addons/counterstrikesharp/plugins/CS2-Essentials
-          CSSharpUtilsDllPath=$(find ~/.nuget/packages/cssharputils/ -name "CSSharpUtils.dll" | head -n 1)
-          if [ -z "$CSSharpUtilsDllPath" ]; then
-            echo "CSSharpUtils.dll not found. Exiting."
-            exit 1
-          fi
-          cp "$CSSharpUtilsDllPath" release/addons/counterstrikesharp/plugins/CS2-Essentials/
+      - name: Build (copy dependencies to output)
+        run: dotnet build -c Release --no-restore /p:Version=${{ env.VERSION_NUMBER }} /p:CopyLocalLockFileAssemblies=true
 
       - name: Create necessary directory structure and copy files
         run: |
@@ -77,25 +67,16 @@ jobs:
 
       - name: Create GitHub Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION_NUMBER }}
-          release_name: ${{ env.VERSION_NUMBER }}
+          name: ${{ env.VERSION_NUMBER }}
           draft: false
           prerelease: false
           body: |
             ## Changes
             - Auto-generated release
             ${{ github.event.head_commit.message }}
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
+          files: CS2-Essentials-${{ env.VERSION_NUMBER }}-${{ env.GITHUB_SHA_SHORT }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./CS2-Essentials-${{ env.VERSION_NUMBER }}-${{ env.GITHUB_SHA_SHORT }}.zip
-          asset_name: CS2-Essentials-${{ env.VERSION_NUMBER }}-${{ env.GITHUB_SHA_SHORT }}.zip
-          asset_content_type: application/zip
