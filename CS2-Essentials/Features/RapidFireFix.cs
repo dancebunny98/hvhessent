@@ -79,20 +79,19 @@ public class RapidFire
         var weaponData = firedWeapon?.GetVData<CCSWeaponBaseVData>();
         var index = eventWeaponFire.Userid.Pawn.Index;
 
-        // === НОВЫЙ БЛОК ДЛЯ РАЗРЕШЕНИЯ БЫСТРОЙ СТРЕЛЬБЫ ===
+        // ===== РАЗРЕШАЕМ БЫСТРУЮ СТРЕЛЬБУ =====
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
         {
-            // Сбрасываем ограничение на следующий выстрел, чтобы игрок мог стрелять с любой скоростью
             if (firedWeapon != null && firedWeapon.DesignerName != "weapon_revolver")
             {
-                // Устанавливаем следующий разрешённый тик атаки на текущий тик игрока
-                firedWeapon.NextPrimaryAttackTick = (int)eventWeaponFire.Userid.TickBase;
+                // Устанавливаем следующий тик атаки в 0, чтобы оружие было готово мгновенно.
+                firedWeapon.NextPrimaryAttackTick = 0;
                 Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
             }
             return HookResult.Continue;
         }
 
-        // Остальная логика для остальных режимов (Ignore, Reflect, ReflectSafe)
+        // ===== ОСТАЛЬНЫЕ РЕЖИМЫ =====
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Ignore)
             return HookResult.Continue;
 
@@ -110,9 +109,6 @@ public class RapidFire
         if (shotTickDiff > possibleAttackDiff || 
             firedWeapon?.DesignerName == "weapon_revolver")
             return HookResult.Continue; 
-
-        // no chat message if we allow rapid fire (но Allow уже обработан выше)
-        // Здесь Allow уже не будет, так как мы вернули Continue выше
 
         Console.WriteLine($"[HvH.gg] Detected rapid fire from {eventWeaponFire.Userid.PlayerName}");
             
@@ -157,8 +153,7 @@ public class RapidFire
             case (int)FixMethod.Reflect:
             case (int)FixMethod.ReflectSafe:
                 damageInfo.Damage *= hvh_rapidfire_reflect_scale.Value;
-                // Убрана ошибочная строка: h.SetParam<CEntityInstance>(0, damageInfo.Attacker.Value);
-                // Теперь урон просто умножается, а получатель остаётся прежним
+                // Исправлено: убираем ошибочную замену получателя урона
                 if (hvh_restrict_rapidfire.Value == (int)FixMethod.ReflectSafe)
                     damageInfo.DamageFlags |= TakeDamageFlags_t.DFLAG_PREVENT_DEATH;
                 break;
