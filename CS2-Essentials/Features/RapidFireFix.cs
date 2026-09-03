@@ -11,7 +11,7 @@ using hvhgg_essentials.Enums;
 
 namespace hvhgg_essentials.Features;
 
-public class RapidFireFix // или RapidFire, как у вас
+public class RapidFire
 {
     private readonly Dictionary<uint, int> _lastPlayerShotTick = new();
     private readonly HashSet<uint> _rapidFireBlockUserIds = new();
@@ -21,7 +21,7 @@ public class RapidFireFix // или RapidFire, как у вас
     public static readonly FakeConVar<int> hvh_restrict_rapidfire = new("hvh_restrict_rapidfire", "Restrict rapid fire", 0, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<int>(0, 3));
     public static readonly FakeConVar<float> hvh_rapidfire_reflect_scale = new("hvh_rapidfire_reflect_scale", "Reflect scale", 1, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<float>(0, 1));
 
-    public RapidFireFix(Plugin plugin)
+    public RapidFire(Plugin plugin)
     {
         _plugin = plugin;
         _plugin.RegisterFakeConVars(this);
@@ -75,7 +75,7 @@ public class RapidFireFix // или RapidFire, как у вас
         if (!eventWeaponFire.Userid.IsPlayer())
             return HookResult.Continue;
 
-        // Если режим Allow - просто пропускаем, ничего не делаем (снятие ограничения будет в OnBulletImpact)
+        // Если режим Allow - просто пропускаем, снятие ограничения будет в OnBulletImpact
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
             return HookResult.Continue;
 
@@ -87,7 +87,7 @@ public class RapidFireFix // или RapidFire, как у вас
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Ignore)
             return HookResult.Continue;
 
-        // Режимы Reflect и ReflectSafe - детектируем быструю стрельбу и блокируем/отражаем
+        // Режимы Reflect и ReflectSafe - детектируем быструю стрельбу
         if (!_lastPlayerShotTick.TryGetValue(index, out var lastShotTick))
         {
             _lastPlayerShotTick[index] = Server.TickCount;
@@ -156,8 +156,16 @@ public class RapidFireFix // или RapidFire, как у вас
 
     public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
     {
-        // Получаем оружие
-        var firedWeapon = eventBulletImpact.Userid?.Pawn.Value?.WeaponServices?.ActiveWeapon.Value;
+        // Проверки на null, чтобы избежать предупреждений
+        if (eventBulletImpact.Userid == null || eventBulletImpact.Userid.Pawn == null || eventBulletImpact.Userid.Pawn.Value == null)
+            return HookResult.Continue;
+
+        var playerPawn = eventBulletImpact.Userid.Pawn.Value;
+        var weaponServices = playerPawn.WeaponServices;
+        if (weaponServices == null)
+            return HookResult.Continue;
+
+        var firedWeapon = weaponServices.ActiveWeapon.Value;
         if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
             return HookResult.Continue;
 
