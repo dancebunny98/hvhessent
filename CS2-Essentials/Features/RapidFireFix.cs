@@ -1,4 +1,4 @@
-﻿using CounterStrikeSharp.API;
+using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Cvars;
 using CounterStrikeSharp.API.Modules.Cvars.Validators;
@@ -72,14 +72,30 @@ public class RapidFire
 
     public HookResult OnWeaponFire(EventWeaponFire eventWeaponFire, GameEventInfo info)
     {
-        if (!eventWeaponFire.Userid.IsPlayer() || hvh_restrict_rapidfire.Value == (int)FixMethod.Ignore)
+        if (!eventWeaponFire.Userid.IsPlayer())
             return HookResult.Continue;
-        
+
         var firedWeapon = eventWeaponFire.Userid!.Pawn.Value?.WeaponServices?.ActiveWeapon.Value;
         var weaponData = firedWeapon?.GetVData<CCSWeaponBaseVData>();
-        
         var index = eventWeaponFire.Userid.Pawn.Index;
-            
+
+        // === НОВЫЙ БЛОК ДЛЯ РАЗРЕШЕНИЯ БЫСТРОЙ СТРЕЛЬБЫ ===
+        if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
+        {
+            // Сбрасываем ограничение на следующий выстрел, чтобы игрок мог стрелять с любой скоростью
+            if (firedWeapon != null && firedWeapon.DesignerName != "weapon_revolver")
+            {
+                // Устанавливаем следующий разрешённый тик атаки на текущий тик игрока
+                firedWeapon.NextPrimaryAttackTick = (int)eventWeaponFire.Userid.TickBase;
+                Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
+            }
+            return HookResult.Continue;
+        }
+
+        // Остальная логика для остальных режимов (Ignore, Reflect, ReflectSafe)
+        if (hvh_restrict_rapidfire.Value == (int)FixMethod.Ignore)
+            return HookResult.Continue;
+
         if (!_lastPlayerShotTick.TryGetValue(index, out var lastShotTick))
         {
             _lastPlayerShotTick[index] = Server.TickCount;
@@ -91,24 +107,20 @@ public class RapidFire
         var shotTickDiff = Server.TickCount - lastShotTick;
         var possibleAttackDiff = (weaponData?.CycleTime.Values[0] * 64 ?? 0) - 1;
 
-        // this is ghetto but should work for now
         if (shotTickDiff > possibleAttackDiff || 
             firedWeapon?.DesignerName == "weapon_revolver")
             return HookResult.Continue; 
 
-        // no chat message if we allow rapid fire
-        if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
-            return HookResult.Continue;
-            
+        // no chat message if we allow rapid fire (но Allow уже обработан выше)
+        // Здесь Allow уже не будет, так как мы вернули Continue выше
+
         Console.WriteLine($"[HvH.gg] Detected rapid fire from {eventWeaponFire.Userid.PlayerName}");
             
-        // clear list every frame (in case of misses)
         if (_rapidFireBlockUserIds.Count == 0)
             Server.NextFrame(_rapidFireBlockUserIds.Clear);
             
         _rapidFireBlockUserIds.Add(index);
             
-        // skip warning if we already warned this player in the last 3 seconds
         if (_rapidFireBlockWarnings.TryGetValue(index, out var lastWarningTime) &&
             lastWarningTime + 3 > Server.CurrentTime) 
             return HookResult.Continue;
@@ -116,7 +128,6 @@ public class RapidFire
         if (!_plugin.Config.PrintWarnings) 
             return HookResult.Continue;
         
-        // warn player
         Server.PrintToChatAll($"{ChatUtils.FormatMessage(_plugin.Config.ChatPrefix)} Player {ChatColors.Red}{eventWeaponFire.Userid.PlayerName}{ChatColors.Default} tried using {ChatColors.Red}rapid fire{ChatColors.Default}!");
         _rapidFireBlockWarnings[index] = Server.CurrentTime;
 
@@ -130,15 +141,12 @@ public class RapidFire
 
         var damageInfo = h.GetParam<CTakeDamageInfo>(1);
 
-        // attacker is invalid
         if (damageInfo.Attacker.Value == null)
             return HookResult.Continue;
 
-        // attacker is not in the list
         if (!_rapidFireBlockUserIds.Contains(damageInfo.Attacker.Index))
             return HookResult.Continue;
             
-        // set damage according to config
         switch (hvh_restrict_rapidfire.Value)
         {
             case (int)FixMethod.Allow:
@@ -149,11 +157,10 @@ public class RapidFire
             case (int)FixMethod.Reflect:
             case (int)FixMethod.ReflectSafe:
                 damageInfo.Damage *= hvh_rapidfire_reflect_scale.Value;
-                h.SetParam<CEntityInstance>(0, damageInfo.Attacker.Value);
+                // Убрана ошибочная строка: h.SetParam<CEntityInstance>(0, damageInfo.Attacker.Value);
+                // Теперь урон просто умножается, а получатель остаётся прежним
                 if (hvh_restrict_rapidfire.Value == (int)FixMethod.ReflectSafe)
-                    damageInfo.DamageFlags |= TakeDamageFlags_t.DFLAG_PREVENT_DEATH; //https://docs.cssharp.dev/api/CounterStrikeSharp.API.Core.TakeDamageFlags_t.html
-                break;
-            default:
+                    damageInfo.DamageFlags |= TakeDamageFlags_t.DFLAG_PREVENT_DEATH;
                 break;
         }
 
@@ -180,7 +187,6 @@ public class RapidFire
 
         firedWeapon.NextPrimaryAttackTick = Math.Max(firedWeapon.NextPrimaryAttackTick, tickBase + fixedPrimaryTick);
 
-        // maybe deprecated as CSSharp auto setting state changes
         Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
 
         return HookResult.Continue;
