@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <RootNamespace>hvhgg_essentials</RootNamespace>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="CounterStrikeSharp.API" Version="1.0.352" />
+      <PackageReference Include="CS2-CustomVotes.Shared" Version="1.1.4" />
+      <PackageReference Include="CSSharpUtils" Version="1.0.9" />
+    </ItemGroup>
+</Project>
