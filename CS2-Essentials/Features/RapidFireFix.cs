@@ -75,26 +75,19 @@ public class RapidFire
         if (!eventWeaponFire.Userid.IsPlayer())
             return HookResult.Continue;
 
+        // Если режим Allow - просто пропускаем, ничего не делаем (снятие ограничения будет в OnBulletImpact)
+        if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
+            return HookResult.Continue;
+
         var firedWeapon = eventWeaponFire.Userid!.Pawn.Value?.WeaponServices?.ActiveWeapon.Value;
         var weaponData = firedWeapon?.GetVData<CCSWeaponBaseVData>();
         var index = eventWeaponFire.Userid.Pawn.Index;
 
-        // ===== РАЗРЕШАЕМ БЫСТРУЮ СТРЕЛЬБУ =====
-        if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
-        {
-            if (firedWeapon != null && firedWeapon.DesignerName != "weapon_revolver")
-            {
-                // Устанавливаем следующий тик атаки в 0, чтобы оружие было готово мгновенно.
-                firedWeapon.NextPrimaryAttackTick = 0;
-                Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
-            }
-            return HookResult.Continue;
-        }
-
-        // ===== ОСТАЛЬНЫЕ РЕЖИМЫ =====
+        // Режим Ignore - пропускаем
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Ignore)
             return HookResult.Continue;
 
+        // Режимы Reflect и ReflectSafe - детектируем быструю стрельбу и блокируем/отражаем
         if (!_lastPlayerShotTick.TryGetValue(index, out var lastShotTick))
         {
             _lastPlayerShotTick[index] = Server.TickCount;
@@ -153,7 +146,6 @@ public class RapidFire
             case (int)FixMethod.Reflect:
             case (int)FixMethod.ReflectSafe:
                 damageInfo.Damage *= hvh_rapidfire_reflect_scale.Value;
-                // Исправлено: убираем ошибочную замену получателя урона
                 if (hvh_restrict_rapidfire.Value == (int)FixMethod.ReflectSafe)
                     damageInfo.DamageFlags |= TakeDamageFlags_t.DFLAG_PREVENT_DEATH;
                 break;
@@ -164,24 +156,32 @@ public class RapidFire
 
     public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
     {
-        if (hvh_restrict_rapidfire.Value != (int)FixMethod.Ignore)
-            return HookResult.Continue;
-
-        var firedWeapon = eventBulletImpact.Userid!.Pawn.Value!.WeaponServices!.ActiveWeapon.Value;
-
+        var firedWeapon = eventBulletImpact.Userid?.Pawn.Value?.WeaponServices?.ActiveWeapon.Value;
         if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
             return HookResult.Continue;
 
-        var weaponData = firedWeapon.GetVData<CCSWeaponBaseVData>();
+        // ===== РЕЖИМ ALLOW: снимаем ограничение после выстрела =====
+        if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
+        {
+            int tickBase = (int)eventBulletImpact.Userid.TickBase;
+            // Устанавливаем следующий разрешённый тик на текущий тик минус 1
+            // Это даёт серверу небольшой запас, чтобы клиент успел отправить историю атаки
+            firedWeapon.NextPrimaryAttackTick = tickBase - 1;
+            Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
+            return HookResult.Continue;
+        }
 
+        // ===== РЕЖИМ IGNORE: задерживаем следующий выстрел =====
+        if (hvh_restrict_rapidfire.Value != (int)FixMethod.Ignore)
+            return HookResult.Continue;
+
+        var weaponData = firedWeapon.GetVData<CCSWeaponBaseVData>();
         if (weaponData == null)
             return HookResult.Continue;
 
         int tickBase = (int)eventBulletImpact.Userid.TickBase;
         int fixedPrimaryTick = (int)Math.Round(weaponData.CycleTime.Values[0] * 64) - 3;
-
         firedWeapon.NextPrimaryAttackTick = Math.Max(firedWeapon.NextPrimaryAttackTick, tickBase + fixedPrimaryTick);
-
         Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
 
         return HookResult.Continue;
