@@ -17,10 +17,10 @@ public class RapidFire
     private readonly HashSet<uint> _rapidFireBlockUserIds = new();
     private readonly Dictionary<uint, float> _rapidFireBlockWarnings = new();
 
-    // Для бурста (2 выстрела) в режиме Allow
-    private readonly Dictionary<uint, float> _lastBurstShotTime = new();
-    private readonly Dictionary<uint, int> _burstShotCount = new();
-    private const float BURST_TIMEOUT = 0.2f; // 200 мс между сериями
+    // ===== ЗАКОММЕНТИРОВАН БУСТ (2 ВЫСТРЕЛА) =====
+    // private readonly Dictionary<uint, float> _lastBurstShotTime = new();
+    // private readonly Dictionary<uint, int> _burstShotCount = new();
+    // private const float BURST_TIMEOUT = 0.2f;
 
     private readonly Plugin _plugin;
     public static readonly FakeConVar<int> hvh_restrict_rapidfire = new("hvh_restrict_rapidfire", "Restrict rapid fire", 0, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<int>(0, 3));
@@ -75,7 +75,6 @@ public class RapidFire
         Plugin.CustomVotesApi.Get()?.RemoveCustomVote("rapidfire");
     }
 
-    // ===== ДЕТЕКЦИЯ БЫСТРОЙ СТРЕЛЬБЫ (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnWeaponFire(EventWeaponFire eventWeaponFire, GameEventInfo info)
     {
         if (!eventWeaponFire.Userid.IsPlayer())
@@ -96,8 +95,8 @@ public class RapidFire
         
         var shotTickDiff = Server.TickCount - lastShotTick;
         
-        // ДОПУСК (tolerance) – уменьшает ложные срабатывания
-        int tolerance = 2; // можно вынести в конфиг
+        // ===== ДОБАВЛЕН ДОПУСК (tolerance) =====
+        int tolerance = 2; // можно изменить на 4, если нужно
         var possibleAttackDiff = (weaponData?.CycleTime.Values[0] * 64 ?? 0) - 1 + tolerance;
 
         // Если разница больше допустимой – стрельба нормальная
@@ -105,7 +104,7 @@ public class RapidFire
             firedWeapon?.DesignerName == "weapon_revolver")
             return HookResult.Continue; 
 
-        // Если режим Allow – не блокируем, только детектируем (но не добавляем в чёрный список)
+        // Если режим Allow – не блокируем, просто пропускаем (ничего не делаем)
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
             return HookResult.Continue;
             
@@ -130,7 +129,6 @@ public class RapidFire
         return HookResult.Continue;
     }
     
-    // ===== ОБРАБОТКА УРОНА (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnTakeDamage(DynamicHook h)
     {
         var damageInfo = h.GetParam<CTakeDamageInfo>(1);
@@ -160,56 +158,31 @@ public class RapidFire
         return HookResult.Changed;
     }
 
-    // ===== РАЗРЕШЕНИЕ БУРСТА (2 ВЫСТРЕЛА) ДЛЯ РЕЖИМА ALLOW =====
-    public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
-    {
-        // Проверки на null
-        if (eventBulletImpact.Userid == null || eventBulletImpact.Userid.Pawn == null || eventBulletImpact.Userid.Pawn.Value == null)
-            return HookResult.Continue;
-
-        var player = eventBulletImpact.Userid;
-        var playerPawn = player.Pawn.Value;
-        var weaponServices = playerPawn.WeaponServices;
-        if (weaponServices == null)
-            return HookResult.Continue;
-
-        var firedWeapon = weaponServices.ActiveWeapon.Value;
-        if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
-            return HookResult.Continue;
-
-        // Только для режима Allow
-        if (hvh_restrict_rapidfire.Value != (int)FixMethod.Allow)
-            return HookResult.Continue;
-
-        uint index = player.Index;
-        float currentTime = Server.CurrentTime;
-
-        // Проверяем, прошло ли достаточно времени для новой серии
-        if (!_lastBurstShotTime.TryGetValue(index, out var lastTime) || currentTime - lastTime > BURST_TIMEOUT)
-        {
-            // Начало новой серии
-            _burstShotCount[index] = 1;
-            _lastBurstShotTime[index] = currentTime;
-            // Разрешаем первый выстрел (сбрасываем задержку)
-            int playerTickBase = (int)player.TickBase;
-            firedWeapon.NextPrimaryAttackTick = playerTickBase - 1;
-            Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
-        }
-        else
-        {
-            // Продолжение серии
-            _burstShotCount[index]++;
-            _lastBurstShotTime[index] = currentTime;
-            if (_burstShotCount[index] <= 2)
-            {
-                // Второй выстрел – разрешаем
-                int playerTickBase = (int)player.TickBase;
-                firedWeapon.NextPrimaryAttackTick = playerTickBase - 1;
-                Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
-            }
-            // Если > 2 – ничего не делаем, оружие стреляет с обычной задержкой
-        }
-
-        return HookResult.Continue;
-    }
+    // ===== МЕТОД OnBulletImpact ЗАКОММЕНТИРОВАН (БУСТ УБРАН) =====
+    // public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
+    // {
+    //     // Проверки на null
+    //     if (eventBulletImpact.Userid == null || eventBulletImpact.Userid.Pawn == null || eventBulletImpact.Userid.Pawn.Value == null)
+    //         return HookResult.Continue;
+    // 
+    //     var player = eventBulletImpact.Userid;
+    //     var playerPawn = player.Pawn.Value;
+    //     var weaponServices = playerPawn.WeaponServices;
+    //     if (weaponServices == null)
+    //         return HookResult.Continue;
+    // 
+    //     var firedWeapon = weaponServices.ActiveWeapon.Value;
+    //     if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
+    //         return HookResult.Continue;
+    // 
+    //     // Только для режима Allow (закомментировано, т.к. буст убран)
+    //     // if (hvh_restrict_rapidfire.Value != (int)FixMethod.Allow)
+    //     //     return HookResult.Continue;
+    // 
+    //     // uint index = player.Index;
+    //     // float currentTime = Server.CurrentTime;
+    //     // ... остальной код буста ...
+    // 
+    //     return HookResult.Continue;
+    // }
 }
