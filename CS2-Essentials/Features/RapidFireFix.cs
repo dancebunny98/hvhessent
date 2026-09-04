@@ -17,6 +17,11 @@ public class RapidFire
     private readonly HashSet<uint> _rapidFireBlockUserIds = new();
     private readonly Dictionary<uint, float> _rapidFireBlockWarnings = new();
 
+    // Для бурста (2 выстрела) в режиме Allow
+    private readonly Dictionary<uint, float> _lastBurstShotTime = new();
+    private readonly Dictionary<uint, int> _burstShotCount = new();
+    private const float BURST_TIMEOUT = 0.2f; // 200 мс между сериями
+
     private readonly Plugin _plugin;
     public static readonly FakeConVar<int> hvh_restrict_rapidfire = new("hvh_restrict_rapidfire", "Restrict rapid fire", 0, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<int>(0, 3));
     public static readonly FakeConVar<float> hvh_rapidfire_reflect_scale = new("hvh_rapidfire_reflect_scale", "Reflect scale", 1, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<float>(0, 1));
@@ -70,6 +75,7 @@ public class RapidFire
         Plugin.CustomVotesApi.Get()?.RemoveCustomVote("rapidfire");
     }
 
+    // ===== ДЕТЕКЦИЯ БЫСТРОЙ СТРЕЛЬБЫ (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnWeaponFire(EventWeaponFire eventWeaponFire, GameEventInfo info)
     {
         if (!eventWeaponFire.Userid.IsPlayer())
@@ -90,28 +96,27 @@ public class RapidFire
         
         var shotTickDiff = Server.TickCount - lastShotTick;
         
-        // ===== ДОБАВЛЕН ДОПУСК (tolerance) =====
-        int tolerance = 2; // можно изменить на 4, если нужно
+        // ДОПУСК (tolerance) – уменьшает ложные срабатывания
+        int tolerance = 2; // можно вынести в конфиг
         var possibleAttackDiff = (weaponData?.CycleTime.Values[0] * 64 ?? 0) - 1 + tolerance;
 
-        // this is ghetto but should work for now
+        // Если разница больше допустимой – стрельба нормальная
         if (shotTickDiff > possibleAttackDiff || 
             firedWeapon?.DesignerName == "weapon_revolver")
             return HookResult.Continue; 
 
-        // no chat message if we allow rapid fire
+        // Если режим Allow – не блокируем, только детектируем (но не добавляем в чёрный список)
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
             return HookResult.Continue;
             
+        // Для остальных режимов – добавляем в чёрный список и логируем
         Console.WriteLine($"[HvH.gg] Detected rapid fire from {eventWeaponFire.Userid.PlayerName}");
             
-        // clear list every frame (in case of misses)
         if (_rapidFireBlockUserIds.Count == 0)
             Server.NextFrame(_rapidFireBlockUserIds.Clear);
             
         _rapidFireBlockUserIds.Add(index);
             
-        // skip warning if we already warned this player in the last 3 seconds
         if (_rapidFireBlockWarnings.TryGetValue(index, out var lastWarningTime) &&
             lastWarningTime + 3 > Server.CurrentTime) 
             return HookResult.Continue;
@@ -119,26 +124,23 @@ public class RapidFire
         if (!_plugin.Config.PrintWarnings) 
             return HookResult.Continue;
         
-        // warn player
         Server.PrintToChatAll($"{ChatUtils.FormatMessage(_plugin.Config.ChatPrefix)} Player {ChatColors.Red}{eventWeaponFire.Userid.PlayerName}{ChatColors.Default} tried using {ChatColors.Red}rapid fire{ChatColors.Default}!");
         _rapidFireBlockWarnings[index] = Server.CurrentTime;
 
         return HookResult.Continue;
     }
     
+    // ===== ОБРАБОТКА УРОНА (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnTakeDamage(DynamicHook h)
     {
         var damageInfo = h.GetParam<CTakeDamageInfo>(1);
 
-        // attacker is invalid
         if (damageInfo.Attacker.Value == null)
             return HookResult.Continue;
 
-        // attacker is not in the list
         if (!_rapidFireBlockUserIds.Contains(damageInfo.Attacker.Index))
             return HookResult.Continue;
             
-        // set damage according to config
         switch (hvh_restrict_rapidfire.Value)
         {
             case (int)FixMethod.Allow:
@@ -153,10 +155,61 @@ public class RapidFire
                 if (hvh_restrict_rapidfire.Value == (int)FixMethod.ReflectSafe)
                     damageInfo.DamageFlags |= TakeDamageFlags_t.DFLAG_PREVENT_DEATH;
                 break;
-            default:
-                break;
         }
 
         return HookResult.Changed;
+    }
+
+    // ===== РАЗРЕШЕНИЕ БУРСТА (2 ВЫСТРЕЛА) ДЛЯ РЕЖИМА ALLOW =====
+    public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
+    {
+        // Проверки на null
+        if (eventBulletImpact.Userid == null || eventBulletImpact.Userid.Pawn == null || eventBulletImpact.Userid.Pawn.Value == null)
+            return HookResult.Continue;
+
+        var player = eventBulletImpact.Userid;
+        var playerPawn = player.Pawn.Value;
+        var weaponServices = playerPawn.WeaponServices;
+        if (weaponServices == null)
+            return HookResult.Continue;
+
+        var firedWeapon = weaponServices.ActiveWeapon.Value;
+        if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
+            return HookResult.Continue;
+
+        // Только для режима Allow
+        if (hvh_restrict_rapidfire.Value != (int)FixMethod.Allow)
+            return HookResult.Continue;
+
+        uint index = player.Index;
+        float currentTime = Server.CurrentTime;
+
+        // Проверяем, прошло ли достаточно времени для новой серии
+        if (!_lastBurstShotTime.TryGetValue(index, out var lastTime) || currentTime - lastTime > BURST_TIMEOUT)
+        {
+            // Начало новой серии
+            _burstShotCount[index] = 1;
+            _lastBurstShotTime[index] = currentTime;
+            // Разрешаем первый выстрел (сбрасываем задержку)
+            int playerTickBase = (int)player.TickBase;
+            firedWeapon.NextPrimaryAttackTick = playerTickBase - 1;
+            Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
+        }
+        else
+        {
+            // Продолжение серии
+            _burstShotCount[index]++;
+            _lastBurstShotTime[index] = currentTime;
+            if (_burstShotCount[index] <= 2)
+            {
+                // Второй выстрел – разрешаем
+                int playerTickBase = (int)player.TickBase;
+                firedWeapon.NextPrimaryAttackTick = playerTickBase - 1;
+                Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
+            }
+            // Если > 2 – ничего не делаем, оружие стреляет с обычной задержкой
+        }
+
+        return HookResult.Continue;
     }
 }
