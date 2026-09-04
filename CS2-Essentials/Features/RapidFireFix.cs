@@ -17,11 +17,6 @@ public class RapidFire
     private readonly HashSet<uint> _rapidFireBlockUserIds = new();
     private readonly Dictionary<uint, float> _rapidFireBlockWarnings = new();
 
-    // ===== ЗАКОММЕНТИРОВАН БУСТ (2 ВЫСТРЕЛА) =====
-    // private readonly Dictionary<uint, float> _lastBurstShotTime = new();
-    // private readonly Dictionary<uint, int> _burstShotCount = new();
-    // private const float BURST_TIMEOUT = 0.2f;
-
     private readonly Plugin _plugin;
     public static readonly FakeConVar<int> hvh_restrict_rapidfire = new("hvh_restrict_rapidfire", "Restrict rapid fire", 0, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<int>(0, 3));
     public static readonly FakeConVar<float> hvh_rapidfire_reflect_scale = new("hvh_rapidfire_reflect_scale", "Reflect scale", 1, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<float>(0, 1));
@@ -75,6 +70,7 @@ public class RapidFire
         Plugin.CustomVotesApi.Get()?.RemoveCustomVote("rapidfire");
     }
 
+    // ===== ДЕТЕКЦИЯ БЫСТРОЙ СТРЕЛЬБЫ (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnWeaponFire(EventWeaponFire eventWeaponFire, GameEventInfo info)
     {
         if (!eventWeaponFire.Userid.IsPlayer())
@@ -104,7 +100,7 @@ public class RapidFire
             firedWeapon?.DesignerName == "weapon_revolver")
             return HookResult.Continue; 
 
-        // Если режим Allow – не блокируем, просто пропускаем (ничего не делаем)
+        // Если режим Allow – не блокируем, просто пропускаем
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
             return HookResult.Continue;
             
@@ -129,6 +125,7 @@ public class RapidFire
         return HookResult.Continue;
     }
     
+    // ===== ОБРАБОТКА УРОНА (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnTakeDamage(DynamicHook h)
     {
         var damageInfo = h.GetParam<CTakeDamageInfo>(1);
@@ -158,31 +155,11 @@ public class RapidFire
         return HookResult.Changed;
     }
 
-    // ===== МЕТОД OnBulletImpact ЗАКОММЕНТИРОВАН (БУСТ УБРАН) =====
-    // public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
-    // {
-    //     // Проверки на null
-    //     if (eventBulletImpact.Userid == null || eventBulletImpact.Userid.Pawn == null || eventBulletImpact.Userid.Pawn.Value == null)
-    //         return HookResult.Continue;
-    // 
-    //     var player = eventBulletImpact.Userid;
-    //     var playerPawn = player.Pawn.Value;
-    //     var weaponServices = playerPawn.WeaponServices;
-    //     if (weaponServices == null)
-    //         return HookResult.Continue;
-    // 
-    //     var firedWeapon = weaponServices.ActiveWeapon.Value;
-    //     if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
-    //         return HookResult.Continue;
-    // 
-    //     // Только для режима Allow (закомментировано, т.к. буст убран)
-    //     // if (hvh_restrict_rapidfire.Value != (int)FixMethod.Allow)
-    //     //     return HookResult.Continue;
-    // 
-    //     // uint index = player.Index;
-    //     // float currentTime = Server.CurrentTime;
-    //     // ... остальной код буста ...
-    // 
-    //     return HookResult.Continue;
-    // }
+    // ===== МЕТОД OnBulletImpact (заглушка, без буста) =====
+    // Он нужен, чтобы Plugin.cs мог его вызвать, но логика удалена.
+    public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
+    {
+        // Никакой логики буста – просто возвращаем Continue.
+        return HookResult.Continue;
+    }
 }
