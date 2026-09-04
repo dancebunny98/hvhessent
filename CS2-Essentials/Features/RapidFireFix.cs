@@ -92,7 +92,7 @@ public class RapidFire
         var shotTickDiff = Server.TickCount - lastShotTick;
         
         // ===== ДОБАВЛЕН ДОПУСК (tolerance) =====
-        int tolerance = 2; // можно изменить на 4, если нужно
+        int tolerance = 4; // можно изменить на 4, если нужно
         var possibleAttackDiff = (weaponData?.CycleTime.Values[0] * 64 ?? 0) - 1 + tolerance;
 
         // Если разница больше допустимой – стрельба нормальная
