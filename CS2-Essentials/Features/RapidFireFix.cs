@@ -17,6 +17,11 @@ public class RapidFire
     private readonly HashSet<uint> _rapidFireBlockUserIds = new();
     private readonly Dictionary<uint, float> _rapidFireBlockWarnings = new();
 
+    // ===== ДЛЯ БУРСТА (2 ВЫСТРЕЛА) =====
+    private readonly Dictionary<uint, float> _lastBurstShotTime = new();
+    private readonly Dictionary<uint, int> _burstShotCount = new();
+    private const float BURST_TIMEOUT = 0.2f; // задержка между сериями
+
     private readonly Plugin _plugin;
     public static readonly FakeConVar<int> hvh_restrict_rapidfire = new("hvh_restrict_rapidfire", "Restrict rapid fire", 0, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<int>(0, 3));
     public static readonly FakeConVar<float> hvh_rapidfire_reflect_scale = new("hvh_rapidfire_reflect_scale", "Reflect scale", 1, ConVarFlags.FCVAR_REPLICATED, new RangeValidator<float>(0, 1));
@@ -25,7 +30,7 @@ public class RapidFire
     {
         _plugin = plugin;
         _plugin.RegisterFakeConVars(this);
-        hvh_restrict_rapidfire.Value = (int) _plugin.Config.RapidFireFixMethod;
+        hvh_restrict_rapidfire.Value = (int)_plugin.Config.RapidFireFixMethod;
         hvh_rapidfire_reflect_scale.Value = _plugin.Config.RapidFireReflectScale;
     }
 
@@ -46,23 +51,23 @@ public class RapidFire
         {
             options.Add("Allow", new VoteOption("{Green}Allow", new List<string> { "hvh_restrict_rapidfire 0" }));
             options.Add("Block", new VoteOption("{Red}Block", new List<string> { "hvh_restrict_rapidfire 1" }));
-            
+
             if (plugin.Config.CustomVoteSettings.RapidFireVote == "full")
             {
                 options.Add("Reflect", new VoteOption("{Orange}Reflect", new List<string> { "hvh_restrict_rapidfire 2" }));
                 options.Add("Reflect (safe)", new VoteOption("{Orange}Reflect (safe)", new List<string> { "hvh_restrict_rapidfire 3" }));
             }
         }
-        
+
         Plugin.CustomVotesApi.Get()?.AddCustomVote(
-            "rapidfire", 
+            "rapidfire",
             new List<string> {
-              "rf"  
+              "rf"
             },
-            "Rapid fire", 
-            defaultOption, 
+            "Rapid fire",
+            defaultOption,
             30,
-            options, 
+            options,
             plugin.Config.CustomVoteSettings.Style);
     }
     public static void UnregisterCustomVotes(Plugin plugin)
@@ -75,56 +80,54 @@ public class RapidFire
     {
         if (!eventWeaponFire.Userid.IsPlayer())
             return HookResult.Continue;
-        
+
         var firedWeapon = eventWeaponFire.Userid!.Pawn.Value?.WeaponServices?.ActiveWeapon.Value;
         var weaponData = firedWeapon?.GetVData<CCSWeaponBaseVData>();
-        
+
         var index = eventWeaponFire.Userid.Pawn.Index;
-            
+
         if (!_lastPlayerShotTick.TryGetValue(index, out var lastShotTick))
         {
             _lastPlayerShotTick[index] = Server.TickCount;
             return HookResult.Continue;
         }
-            
+
         _lastPlayerShotTick[index] = Server.TickCount;
-        
+
         var shotTickDiff = Server.TickCount - lastShotTick;
-        
-        // ===== ДОБАВЛЕН ДОПУСК (tolerance) =====
-        int tolerance = 4; // можно изменить на 4, если нужно
-        var possibleAttackDiff = (weaponData?.CycleTime.Values[0] * 64 ?? 0) - 1 + tolerance;
 
-        // Если разница больше допустимой – стрельба нормальная
-        if (shotTickDiff > possibleAttackDiff || 
+        // ===== ДОПУСК (tolerance) с ВЫЧИТАНИЕМ =====
+        int tolerance = 4; // можно настроить под свой сервер
+        var possibleAttackDiff = (weaponData?.CycleTime.Values[0] * 64 ?? 0) - 1 - tolerance;
+
+        if (shotTickDiff > possibleAttackDiff ||
             firedWeapon?.DesignerName == "weapon_revolver")
-            return HookResult.Continue; 
+            return HookResult.Continue;
 
-        // Если режим Allow – не блокируем, просто пропускаем
+        // Режим Allow – не блокируем (буст обрабатывается в OnBulletImpact)
         if (hvh_restrict_rapidfire.Value == (int)FixMethod.Allow)
             return HookResult.Continue;
-            
-        // Для остальных режимов – добавляем в чёрный список и логируем
+
         Console.WriteLine($"[HvH.gg] Detected rapid fire from {eventWeaponFire.Userid.PlayerName}");
-            
+
         if (_rapidFireBlockUserIds.Count == 0)
             Server.NextFrame(_rapidFireBlockUserIds.Clear);
-            
+
         _rapidFireBlockUserIds.Add(index);
-            
+
         if (_rapidFireBlockWarnings.TryGetValue(index, out var lastWarningTime) &&
-            lastWarningTime + 3 > Server.CurrentTime) 
+            lastWarningTime + 3 > Server.CurrentTime)
             return HookResult.Continue;
-            
-        if (!_plugin.Config.PrintWarnings) 
+
+        if (!_plugin.Config.PrintWarnings)
             return HookResult.Continue;
-        
+
         Server.PrintToChatAll($"{ChatUtils.FormatMessage(_plugin.Config.ChatPrefix)} Player {ChatColors.Red}{eventWeaponFire.Userid.PlayerName}{ChatColors.Default} tried using {ChatColors.Red}rapid fire{ChatColors.Default}!");
         _rapidFireBlockWarnings[index] = Server.CurrentTime;
 
         return HookResult.Continue;
     }
-    
+
     // ===== ОБРАБОТКА УРОНА (для Ignore/Reflect/ReflectSafe) =====
     public HookResult OnTakeDamage(DynamicHook h)
     {
@@ -135,7 +138,7 @@ public class RapidFire
 
         if (!_rapidFireBlockUserIds.Contains(damageInfo.Attacker.Index))
             return HookResult.Continue;
-            
+
         switch (hvh_restrict_rapidfire.Value)
         {
             case (int)FixMethod.Allow:
@@ -155,11 +158,64 @@ public class RapidFire
         return HookResult.Changed;
     }
 
-    // ===== МЕТОД OnBulletImpact (заглушка, без буста) =====
-    // Он нужен, чтобы Plugin.cs мог его вызвать, но логика удалена.
+    // ===== БУРСТ (2 ВЫСТРЕЛА) ДЛЯ РЕЖИМА ALLOW =====
     public HookResult OnBulletImpact(EventBulletImpact eventBulletImpact, GameEventInfo info)
     {
-        // Никакой логики буста – просто возвращаем Continue.
+        if (eventBulletImpact.Userid == null || eventBulletImpact.Userid.Pawn == null || eventBulletImpact.Userid.Pawn.Value == null)
+            return HookResult.Continue;
+
+        var player = eventBulletImpact.Userid;
+        var playerPawn = player.Pawn.Value;
+        var weaponServices = playerPawn.WeaponServices;
+        if (weaponServices == null)
+            return HookResult.Continue;
+
+        var firedWeapon = weaponServices.ActiveWeapon.Value;
+        if (firedWeapon == null || firedWeapon.DesignerName == "weapon_revolver")
+            return HookResult.Continue;
+
+        if (hvh_restrict_rapidfire.Value != (int)FixMethod.Allow)
+            return HookResult.Continue;
+
+        uint index = player.Index;
+        int currentTick = Server.TickCount;
+        float currentTime = Server.CurrentTime;
+
+        if (!_lastPlayerShotTick.TryGetValue(index, out int lastShotTick))
+        {
+            _lastPlayerShotTick[index] = currentTick;
+            return HookResult.Continue;
+        }
+
+        int shotTickDiff = currentTick - lastShotTick;
+
+        // Проверяем таймаут между сериями
+        if (!_lastBurstShotTime.TryGetValue(index, out float lastBurstTime) || currentTime - lastBurstTime > BURST_TIMEOUT)
+        {
+            // Новая серия
+            _burstShotCount[index] = 1;
+            _lastBurstShotTime[index] = currentTime;
+        }
+        else
+        {
+            // Продолжаем серию
+            _burstShotCount[index]++;
+            _lastBurstShotTime[index] = currentTime;
+        }
+
+        int burstCount = _burstShotCount[index];
+
+        // Разрешаем сброс задержки только если это первый или второй выстрел в серии
+        // и разница между выстрелами от 0 до 3 тиков включительно
+        if (burstCount <= 2 && shotTickDiff >= 0 && shotTickDiff <= 3)
+        {
+            int playerTickBase = (int)player.TickBase;
+            firedWeapon.NextPrimaryAttackTick = playerTickBase - 1;
+            Utilities.SetStateChanged(firedWeapon, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
+        }
+
+        _lastPlayerShotTick[index] = currentTick;
+
         return HookResult.Continue;
     }
 }
